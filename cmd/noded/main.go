@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,6 +21,7 @@ import (
 	"go.sia.tech/coreutils/chain"
 	"go.sia.tech/coreutils/syncer"
 	"go.sia.tech/coreutils/testutil"
+	"go.sia.tech/node/api"
 	"go.sia.tech/node/internal/ip"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -80,8 +83,6 @@ func main() {
 		log.Panic("unknown network", zap.String("name", networkName))
 	}
 	genesisID := genesis.ID()
-	genesisState, _ := consensus.ApplyBlock(network.GenesisState(), genesis, consensus.V1BlockSupplement{Transactions: make([]consensus.V1TransactionSupplement, len(genesis.Transactions))}, time.Time{})
-	log.Debug("using network", zap.String("name", networkName), zap.Stringer("genesisID", genesisID), zap.Stringer("genesisState", genesisState.Index))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
@@ -101,6 +102,12 @@ func main() {
 		log.Panic("failed to create chain store", zap.Error(err))
 	}
 	cm := chain.NewManager(dbstore, tipState, chain.WithLog(log.Named("chain")))
+	log.Info("using network", zap.String("name", networkName), zap.Stringer("genesisID", genesisID), zap.Stringer("tip", cm.Tip()))
+
+	stop := cm.OnReorg(func(tip types.ChainIndex) {
+		log.Info("chain reorg", zap.Stringer("tip", tip))
+	})
+	defer stop()
 
 	syncerOpts := []syncer.Option{
 		syncer.WithMaxInflightRPCs(1e6), syncer.WithMaxInboundPeers(1e6),
@@ -156,6 +163,24 @@ func main() {
 		defer s.Close()
 		go s.Run()
 	}
+
+	l, err := net.Listen("tcp", ":8080")
+	if err != nil {
+		log.Panic("failed to listen for API connections", zap.Error(err))
+	}
+	defer l.Close()
+
+	s := &http.Server{
+		Handler:           api.NewHandler(cm),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+	}
+	go func() {
+		log.Info("listening for API connections on :8080")
+		if err := s.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Panic("API server failed", zap.Error(err))
+		}
+	}()
 
 	<-ctx.Done()
 }
