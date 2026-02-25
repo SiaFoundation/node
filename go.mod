@@ -1,6 +1,6 @@
 module go.sia.tech/node
 
-go 1.25.3
+go 1.26.0
 
 require (
 	go.sia.tech/core v0.19.0
