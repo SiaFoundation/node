@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	go.sia.tech/core v0.21.4
-	go.sia.tech/coreutils v0.23.2
+	go.sia.tech/coreutils v0.23.3
 	go.sia.tech/jape v0.14.1
 	go.uber.org/zap v1.28.0
 )
